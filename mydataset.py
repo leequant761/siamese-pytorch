@@ -1,68 +1,79 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
 import os
-from numpy.random import choice as npc
-import numpy as np
-import time
 import random
-import torchvision.datasets as dset
 from PIL import Image
 
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+from torchvision import transforms
 
 class OmniglotTrain(Dataset):
 
     def __init__(self, dataPath, transform=None):
         super(OmniglotTrain, self).__init__()
         np.random.seed(0)
-        # self.dataset = dataset
         self.transform = transform
         self.datas, self.num_classes = self.loadToMem(dataPath)
 
     def loadToMem(self, dataPath):
         print("begin loading training dataset to memory")
         datas = {}
-        agrees = [0, 90, 180, 270]
         idx = 0
-        for agree in agrees:
-            for alphaPath in os.listdir(dataPath):
-                for charPath in os.listdir(os.path.join(dataPath, alphaPath)):
-                    datas[idx] = []
-                    for samplePath in os.listdir(os.path.join(dataPath, alphaPath, charPath)):
-                        filePath = os.path.join(dataPath, alphaPath, charPath, samplePath)
-                        datas[idx].append(Image.open(filePath).rotate(agree).convert('L'))
-                    idx += 1
+        for alphaPath in os.listdir(dataPath):
+            for charPath in os.listdir(os.path.join(dataPath, alphaPath)):
+                datas[idx] = []
+                for samplePath in os.listdir(os.path.join(dataPath, alphaPath, charPath)):
+                    filePath = os.path.join(dataPath, alphaPath, charPath, samplePath)
+                    datas[idx].append(Image.open(filePath).convert('L'))
+                idx += 1
         print("finish loading training dataset to memory")
         return datas, idx
 
     def __len__(self):
-        return  21000000
+        """
+        Repeat N times minibatch sampling 
 
-    def __getitem__(self, index):
-        # image1 = random.choice(self.dataset.imgs)
+        batch_size: DataLoader method's argument
+        N = len / batch_size
+        """
+        return 99999999999
+
+    def __getitem__(self, idx):
+        """
+        DataLoader will randomly select a minibatch from the Dataset instance using index 1 ~ 128.
+        We want to feed (img1, img2, label) = Dataset[n]; for n = 1:128(batch_size)
+        Furthermore, 64 same class image pair & 64 different class image pair
+
+        Outputs
+        ----------
+        img1 : torch.tensor(128, 128)
+        img2 : torch.tensor(128, 128)
+        label : 1(two image are in same class) | 0(two image are in different classes)
+        """
         label = None
         img1 = None
         img2 = None
         # get image from same class
-        if index % 2 == 1:
+        if idx % 2 == 1:
             label = 1.0
-            idx1 = random.randint(0, self.num_classes - 1)
-            image1 = random.choice(self.datas[idx1])
-            image2 = random.choice(self.datas[idx1])
+            img_class = random.randint(0, self.num_classes-1)
+            img1 = random.choice(self.datas[img_class])
+            img2 = random.choice(self.datas[img_class])
         # get image from different class
         else:
             label = 0.0
-            idx1 = random.randint(0, self.num_classes - 1)
-            idx2 = random.randint(0, self.num_classes - 1)
-            while idx1 == idx2:
-                idx2 = random.randint(0, self.num_classes - 1)
-            image1 = random.choice(self.datas[idx1])
-            image2 = random.choice(self.datas[idx2])
-
+            img_class1 = random.randint(0, self.num_classes-1)
+            img_class2 = random.randint(0, self.num_classes-1)
+            while img_class1 == img_class2:
+                img_class2 = random.randint(0, self.num_classes-1)
+            img1 = random.choice(self.datas[img_class1])
+            img2 = random.choice(self.datas[img_class2])
+            
         if self.transform:
-            image1 = self.transform(image1)
-            image2 = self.transform(image2)
-        return image1, image2, torch.from_numpy(np.array([label], dtype=np.float32))
+            img1 = self.transform(img1)
+            img2 = self.transform(img2)
 
+        return img1, img2, torch.FloatTensor([label])
 
 class OmniglotTest(Dataset):
 
@@ -72,8 +83,9 @@ class OmniglotTest(Dataset):
         self.transform = transform
         self.times = times
         self.way = way
-        self.img1 = None
+        self.img1 = None # query
         self.c1 = None
+        self.c2_list = []
         self.datas, self.num_classes = self.loadToMem(dataPath)
 
     def loadToMem(self, dataPath):
@@ -91,30 +103,48 @@ class OmniglotTest(Dataset):
         return datas, idx
 
     def __len__(self):
+        """
+        Repeat N times minibatch sampling
+        
+        batch_size: DataLoader method's argument
+        N = len / batch_size
+        """
         return self.times * self.way
 
-    def __getitem__(self, index):
-        idx = index % self.way
+    def __getitem__(self, idx):
+        """
+        DataLoader will randomly select a minibatch from the Dataset instance using index 0 ~ 19(20-ways).
+        We want to feed [img1's class] == [img2's class] where (img1, img2) = Dataset[0]
+        Furthermore, [img1's class] == [img2's class] where (img1, img2) = Dataset[n] for n = 1:19
+
+        Outputs
+        ----------
+        img1 : torch.tensor(128, 128)
+        img2 : torch.tensor(128, 128)
+        """
         label = None
-        # generate image pair from same class
         if idx == 0:
             self.c1 = random.randint(0, self.num_classes - 1)
             self.img1 = random.choice(self.datas[self.c1])
             img2 = random.choice(self.datas[self.c1])
-        # generate image pair from different class
         else:
             c2 = random.randint(0, self.num_classes - 1)
-            while self.c1 == c2:
+            while self.c1 == c2 or c2 in self.c2_list:
                 c2 = random.randint(0, self.num_classes - 1)
+            self.c2_list.append(c2)
             img2 = random.choice(self.datas[c2])
 
         if self.transform:
-            img1 = self.transform(self.img1)
+            self.img1 = self.transform(self.img1)
             img2 = self.transform(img2)
-        return img1, img2
 
-
+        return self.img1, img2
+            
 # test
 if __name__=='__main__':
-    omniglotTrain = OmniglotTrain('./images_background', 30000*8)
-    print(omniglotTrain)
+    print('=================TRAIN=================')
+    omniglotTrain = OmniglotTrain('./omniglot/python/images_background')
+    print(omniglotTrain[0])
+    print('=================TEST=================')
+    omniglotTest = OmniglotTest('./omniglot/python/images_background')
+    print(omniglotTest[0])
